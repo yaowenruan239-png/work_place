@@ -73,7 +73,12 @@ command_exists() {
 }
 
 health_check() {
-  python - <<'PY' >/dev/null 2>&1
+  if command_exists curl; then
+    curl --noproxy "*" -fsS "$SERVICE_URL/health" >/dev/null 2>&1
+    return $?
+  fi
+
+  NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python - <<'PY' >/dev/null 2>&1
 from urllib.request import urlopen
 urlopen("http://127.0.0.1:8080/health", timeout=1).read()
 PY
@@ -181,7 +186,11 @@ start_cpp_service() {
   fi
 
   log "Starting C++ memory service in background..."
-  (cd "$BUILD_DIR" && nohup "$SERVICE_BIN" > "$SERVICE_LOG" 2>&1 & echo $! > "$PID_FILE")
+  cd "$BUILD_DIR"
+  nohup "$SERVICE_BIN" > "$SERVICE_LOG" 2>&1 &
+  local service_pid=$!
+  cd "$PROJECT_ROOT"
+  echo "$service_pid" > "$PID_FILE"
 
   if ! wait_for_http_health 30 1; then
     echo "C++ memory service failed to become healthy. See log: $SERVICE_LOG" >&2
