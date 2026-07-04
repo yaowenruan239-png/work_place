@@ -1,18 +1,14 @@
 {
   "chart_type_counts": {
-    "bar": 13,
+    "bar": 14,
     "box": 11,
     "scatter": 11,
     "correlation_heatmap": 11,
     "histogram": 11
   },
   "last_used_chart_types": [
-    "bar",
-    "box",
-    "scatter",
-    "correlation_heatmap",
-    "histogram"
+    "bar"
   ],
-  "preferred_report_mode": "full_report",
-  "updated_at": "2026-06-27T21:38:23"
+  "preferred_report_mode": "planner_loop",
+  "updated_at": "2026-07-04T22:21:36"
 }

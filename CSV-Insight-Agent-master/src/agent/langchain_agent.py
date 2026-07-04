@@ -89,18 +89,30 @@ class LangChainCSVAgent:
         context = self.build_context(state)
         tools = build_langchain_tools(self.registry, context)
         prompt = self._build_prompt()
+        user_input = self._build_user_input(state, context)
+        tool_names = ", ".join(tool.name for tool in tools)
+        state["agent_user_input"] = user_input
+        state["agent_rendered_prompt"] = prompt.format(
+            input=user_input,
+            tools=tools,
+            tool_names=tool_names,
+            agent_scratchpad="",
+        )
         executor = self.executor_factory(tools, prompt, self.llm or self._default_llm())
         response = executor.invoke(
             {
-                "input": self._build_user_input(state, context),
+                "input": user_input,
                 "tools": tools,
-                "tool_names": ", ".join(tool.name for tool in tools),
+                "tool_names": tool_names,
                 "agent_scratchpad": "",
             }
         )
         state.update(context.to_state_update())
         state["final_answer"] = str(response.get("output", ""))
-        state["agent_steps"] = steps_from_intermediate(response.get("intermediate_steps", []))
+        agent_steps = steps_from_intermediate(response.get("intermediate_steps", []))
+        if not agent_steps:
+            agent_steps = _steps_from_tool_results(context.tool_results)
+        state["agent_steps"] = agent_steps
         state["planner_steps"] = state["agent_steps"]
         state["status"] = "completed" if not context.errors else "fallback"
         return state
@@ -167,6 +179,7 @@ Question: {input}
             user_query=context.query,
             task_type="csv_analysis",
         )
+        state["experience_context"] = experience_context
         memory_sections = [f"记忆上下文：{state.get('memory_context', '暂无历史记忆。')}"]
         if experience_context:
             memory_sections.append(f"经验记忆上下文：\n{experience_context}")
@@ -178,3 +191,24 @@ Question: {input}
             f"{memory_text}\n"
             "请自动完成 CSV 数据画像、图表生成、洞察总结和报告导出。"
         )
+
+
+def _steps_from_tool_results(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    for index, item in enumerate(tool_results or [], start=1):
+        result = item.get("result") if isinstance(item.get("result"), dict) else item
+        success = item.get("success")
+        if success is None and isinstance(result, dict):
+            success = result.get("success", True)
+        steps.append(
+            {
+                "step_index": index,
+                "thought": "LangChain Tool 执行记录（由工具调用日志兜底展示）。",
+                "action": item.get("skill", "unknown"),
+                "action_input": item.get("args") or {},
+                "observation": result,
+                "success": bool(success),
+                "error": result.get("error") if isinstance(result, dict) else None,
+            }
+        )
+    return steps

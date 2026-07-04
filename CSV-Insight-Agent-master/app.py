@@ -67,6 +67,22 @@ if st.button("开始分析", type="primary"):
     if result.get("errors"):
         st.warning("; ".join(result["errors"]))
 
+    if result.get("experience_context"):
+        st.markdown("### 本次检索到的经验记忆")
+        st.info(result["experience_context"])
+    elif mode == "agent_loop":
+        st.markdown("### 本次检索到的经验记忆")
+        st.caption("未检索到可用经验，或 Agent-Experience-Memory 服务不可用，本次按原流程执行。")
+
+    if result.get("agent_user_input") or result.get("agent_rendered_prompt"):
+        st.markdown("### Agent 实际输入 / Prompt")
+        if result.get("agent_user_input"):
+            with st.expander("查看 Agent 用户输入（含 Memory / Experience Context）", expanded=False):
+                st.text(result["agent_user_input"])
+        if result.get("agent_rendered_prompt"):
+            with st.expander("查看完整 Agent Prompt（调试用）", expanded=False):
+                st.text(result["agent_rendered_prompt"])
+
     charts = result.get("generated_charts", [])
     if charts:
         st.markdown("### 图表结果")
@@ -90,7 +106,7 @@ if st.button("开始分析", type="primary"):
             st.download_button(label, Path(path).read_bytes(), file_name=Path(path).name)
 
     if result.get("planner_steps"):
-        st.markdown("### Agent 执行过程")
+        st.markdown("### Agent 执行过程 / ReAct 工具调用")
         for step in result["planner_steps"]:
             status = "成功" if step.get("success") else "失败"
             label = step.get("tool_name") or step.get("action") or step.get("phase") or "unknown"
@@ -110,3 +126,7 @@ if st.button("开始分析", type="primary"):
                 st.json(step.get("normalized_args") or step.get("action_input") or {})
         with st.expander("查看原始 Agent Trace"):
             st.json(result["planner_steps"])
+
+    if result.get("langchain_tool_results"):
+        with st.expander("查看 LangChain Tool 调用日志", expanded=False):
+            st.json(result["langchain_tool_results"])

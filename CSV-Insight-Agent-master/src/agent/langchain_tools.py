@@ -81,6 +81,7 @@ class AgentRuntimeContext:
             "pdf_path": self.pdf_path,
             "html_path": self.html_path,
             "errors": self.errors,
+            "langchain_tool_results": self.tool_results,
         }
         return {key: value for key, value in update.items() if value not in ({}, [], "")}
 
