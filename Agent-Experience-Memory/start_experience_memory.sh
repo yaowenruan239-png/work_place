@@ -9,30 +9,59 @@ LOG_DIR="$PROJECT_ROOT/logs"
 SERVICE_LOG="$LOG_DIR/agent_memory_service.log"
 PID_FILE="$PROJECT_ROOT/.agent_memory_service.pid"
 SERVICE_URL="http://127.0.0.1:8080"
+SERVICE_PORT="8080"
 
+COMMAND="start"
 INSTALL_DEPS=0
 SEED_DATA=0
 REBUILD_CPP=0
 SKIP_MYSQL=0
+STOP_MYSQL=0
+FORCE_STOP=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./start_experience_memory.sh [options]
+Usage: ./start_experience_memory.sh [command] [options]
 
-Options:
+Commands:
+  start       Start MySQL if needed, build/start C++ memory service, then load index. Default command.
+  stop        Stop the C++ memory service. MySQL is kept running unless --stop-mysql is provided.
+  status      Show C++ service health, port listener, PID file, and MySQL container status.
+  restart     Stop then start the C++ memory service and reload index.
+
+Start options:
   --install-deps   Run pip install -r requirements.txt before startup.
   --seed           Insert demo experience memories before loading the C++ index.
                    Note: current seed_data.py does not de-duplicate rows.
   --rebuild-cpp    Remove cpp_memory_service/build and rebuild C++ service.
   --skip-mysql     Do not run docker compose up -d for MySQL.
+
+Stop options:
+  --stop-mysql     Also stop MySQL with docker compose down.
+  --force          Use kill -9 if normal stop does not terminate the C++ service.
+
+Common options:
   -h, --help       Show this help message.
 
 Examples:
   ./start_experience_memory.sh
-  ./start_experience_memory.sh --install-deps --seed
-  ./start_experience_memory.sh --rebuild-cpp
+  ./start_experience_memory.sh start --install-deps --seed
+  ./start_experience_memory.sh start --rebuild-cpp
+  ./start_experience_memory.sh status
+  ./start_experience_memory.sh stop
+  ./start_experience_memory.sh stop --stop-mysql
+  ./start_experience_memory.sh restart
 USAGE
 }
+
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    start|stop|status|restart)
+      COMMAND="$1"
+      shift
+      ;;
+  esac
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,12 +81,20 @@ while [[ $# -gt 0 ]]; do
       SKIP_MYSQL=1
       shift
       ;;
+    --stop-mysql)
+      STOP_MYSQL=1
+      shift
+      ;;
+    --force)
+      FORCE_STOP=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      echo "Unknown option: $1" >&2
+      echo "Unknown option or command: $1" >&2
       usage
       exit 1
       ;;
@@ -84,6 +121,19 @@ urlopen("http://127.0.0.1:8080/health", timeout=1).read()
 PY
 }
 
+print_health() {
+  if command_exists curl; then
+    curl --noproxy "*" -fsS "$SERVICE_URL/health" 2>/dev/null || true
+    printf '\n'
+    return
+  fi
+
+  NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python - <<'PY' 2>/dev/null || true
+from urllib.request import urlopen
+print(urlopen("http://127.0.0.1:8080/health", timeout=1).read().decode())
+PY
+}
+
 wait_for_http_health() {
   local retries="${1:-30}"
   local delay="${2:-1}"
@@ -94,6 +144,25 @@ wait_for_http_health() {
     sleep "$delay"
   done
   return 1
+}
+
+port_pid() {
+  if command_exists ss; then
+    ss -ltnp 2>/dev/null | grep ":$SERVICE_PORT " | sed -E 's/.*pid=([0-9]+).*/\1/' | head -n 1 || true
+  elif command_exists lsof; then
+    lsof -ti tcp:"$SERVICE_PORT" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
+  fi
+}
+
+pid_file_pid() {
+  if [[ -f "$PID_FILE" ]]; then
+    cat "$PID_FILE" 2>/dev/null || true
+  fi
+}
+
+is_pid_running() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1
 }
 
 wait_for_mysql() {
@@ -127,6 +196,17 @@ start_mysql() {
   log "Starting MySQL with docker compose..."
   (cd "$PROJECT_ROOT" && docker compose up -d)
   wait_for_mysql
+}
+
+stop_mysql() {
+  if [[ "$STOP_MYSQL" -eq 1 ]]; then
+    if ! command_exists docker; then
+      echo "docker is required to stop MySQL." >&2
+      exit 1
+    fi
+    log "Stopping MySQL with docker compose down..."
+    (cd "$PROJECT_ROOT" && docker compose down)
+  fi
 }
 
 install_deps() {
@@ -171,18 +251,24 @@ start_cpp_service() {
     return
   fi
 
-  if [[ -f "$PID_FILE" ]]; then
-    local old_pid
-    old_pid="$(cat "$PID_FILE" || true)"
-    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
-      log "Found existing process pid=$old_pid, waiting for health check..."
-      if wait_for_http_health 10 1; then
-        return
-      fi
-      echo "Existing C++ service process is not healthy. Stop it manually or remove $PID_FILE." >&2
-      exit 1
+  local old_pid
+  old_pid="$(pid_file_pid)"
+  if is_pid_running "$old_pid"; then
+    log "Found existing process pid=$old_pid, waiting for health check..."
+    if wait_for_http_health 10 1; then
+      return
     fi
-    rm -f "$PID_FILE"
+    echo "Existing C++ service process is not healthy. Stop it with: ./start_experience_memory.sh stop --force" >&2
+    exit 1
+  fi
+  rm -f "$PID_FILE"
+
+  local existing_port_pid
+  existing_port_pid="$(port_pid)"
+  if is_pid_running "$existing_port_pid"; then
+    echo "Port $SERVICE_PORT is already occupied by pid=$existing_port_pid, but health check failed." >&2
+    echo "Stop it first with: kill $existing_port_pid" >&2
+    exit 1
   fi
 
   log "Starting C++ memory service in background..."
@@ -205,7 +291,87 @@ load_index() {
   (cd "$PROJECT_ROOT" && NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python -m python_client.load_cpp_index)
 }
 
-main() {
+stop_cpp_service() {
+  local pid_from_file
+  local pid_from_port
+  pid_from_file="$(pid_file_pid)"
+  pid_from_port="$(port_pid)"
+
+  if [[ -z "$pid_from_file" && -z "$pid_from_port" ]]; then
+    log "C++ memory service is not running on port $SERVICE_PORT."
+    rm -f "$PID_FILE"
+    return
+  fi
+
+  local target_pid="${pid_from_port:-$pid_from_file}"
+  if [[ -n "$pid_from_file" && "$pid_from_file" != "$target_pid" ]]; then
+    log "PID file has pid=$pid_from_file, but port $SERVICE_PORT is owned by pid=$target_pid. Using port owner."
+  fi
+
+  if is_pid_running "$target_pid"; then
+    log "Stopping C++ memory service pid=$target_pid..."
+    kill "$target_pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 10); do
+      if ! is_pid_running "$target_pid" && ! health_check; then
+        rm -f "$PID_FILE"
+        log "C++ memory service stopped."
+        return
+      fi
+      sleep 1
+    done
+
+    if [[ "$FORCE_STOP" -eq 1 ]]; then
+      log "Force stopping C++ memory service pid=$target_pid..."
+      kill -9 "$target_pid" >/dev/null 2>&1 || true
+      rm -f "$PID_FILE"
+      log "C++ memory service force stopped."
+      return
+    fi
+
+    echo "C++ memory service did not stop in time. Retry with: ./start_experience_memory.sh stop --force" >&2
+    exit 1
+  fi
+
+  rm -f "$PID_FILE"
+  log "C++ memory service process is not running. Removed stale PID file."
+}
+
+show_status() {
+  echo "Project root: $PROJECT_ROOT"
+  echo "Service URL:  $SERVICE_URL"
+  echo "Service log:  $SERVICE_LOG"
+  echo "PID file:     $PID_FILE"
+  echo
+
+  if health_check; then
+    echo "C++ service:  running"
+    echo -n "Health:       "
+    print_health
+  else
+    echo "C++ service:  stopped or unhealthy"
+  fi
+
+  local file_pid
+  local listener_pid
+  file_pid="$(pid_file_pid)"
+  listener_pid="$(port_pid)"
+  echo "PID file PID: ${file_pid:-none}"
+  echo "Port PID:     ${listener_pid:-none}"
+
+  if command_exists ss; then
+    echo
+    echo "Port listener:"
+    ss -ltnp 2>/dev/null | grep ":$SERVICE_PORT " || echo "no listener on port $SERVICE_PORT"
+  fi
+
+  if command_exists docker; then
+    echo
+    echo "MySQL container:"
+    (cd "$PROJECT_ROOT" && docker compose ps mysql) || true
+  fi
+}
+
+start_all() {
   log "Project root: $PROJECT_ROOT"
   install_deps
   start_mysql
@@ -218,4 +384,32 @@ main() {
   log "PID file: $PID_FILE"
 }
 
-main
+stop_all() {
+  stop_cpp_service
+  stop_mysql
+}
+
+restart_all() {
+  stop_cpp_service || true
+  start_all
+}
+
+case "$COMMAND" in
+  start)
+    start_all
+    ;;
+  stop)
+    stop_all
+    ;;
+  status)
+    show_status
+    ;;
+  restart)
+    restart_all
+    ;;
+  *)
+    echo "Unknown command: $COMMAND" >&2
+    usage
+    exit 1
+    ;;
+esac
