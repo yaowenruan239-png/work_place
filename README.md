@@ -254,18 +254,3 @@ python main.py examples/sales.csv "请分析每个月的销售金额趋势，并
 - 当前项目没有使用 Redis。
 - 不建议提交运行时输出、日志、C++ build 目录和本地环境文件。
 
-## 7. GitHub 推送说明
-
-本地仓库已配置 remote：
-
-```text
-https://github.com/yaowenruan239-png/work_place.git
-```
-
-如果需要推送：
-
-```bash
-git push -u origin main
-```
-
-如果 HTTPS 认证失败，需要先配置 GitHub Token 或改用 SSH remote。
