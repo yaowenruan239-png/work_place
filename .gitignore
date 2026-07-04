@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor metadata
+.DS_Store
+Thumbs.db
+*.Zone.Identifier
+*:Zone.Identifier
+.cursor/
+
+# Runtime logs and pid files
+logs/
+*.log
+*.pid
+.agent_memory_service.pid
+
+# C++ / CMake build artifacts
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+Makefile
+
+# CSV-Insight-Agent generated runtime outputs
+CSV-Insight-Agent-master/outputs/charts/*
+CSV-Insight-Agent-master/outputs/html/*
+CSV-Insight-Agent-master/outputs/reports/*
+CSV-Insight-Agent-master/outputs/uploads/*
+!CSV-Insight-Agent-master/outputs/charts/.gitkeep
+!CSV-Insight-Agent-master/outputs/html/.gitkeep
+!CSV-Insight-Agent-master/outputs/reports/.gitkeep
+!CSV-Insight-Agent-master/outputs/uploads/.gitkeep
+CSV-Insight-Agent-master/memory/task_history.jsonl
+CSV-Insight-Agent-master/memory/.cursor
+
+# Agent-Experience-Memory runtime/build output
+Agent-Experience-Memory/cpp_memory_service/build/
+Agent-Experience-Memory/logs/

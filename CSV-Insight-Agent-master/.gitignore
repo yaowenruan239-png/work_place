@@ -1,0 +1,17 @@
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+outputs/uploads/*
+outputs/charts/*
+outputs/reports/*
+outputs/html/*
+!outputs/uploads/.gitkeep
+!outputs/charts/.gitkeep
+!outputs/reports/.gitkeep
+!outputs/html/.gitkeep
+memory/task_history.jsonl
+memory/.cursor
