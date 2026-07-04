@@ -20,21 +20,34 @@ except Exception as import_exc:  # pragma: no cover - optional integration fallb
 else:
     _IMPORT_ERROR = None
 
+_LAST_WARNING = ""
+
 memory_client = ExperienceMemoryClient("http://127.0.0.1:8080") if ExperienceMemoryClient else None
 
 
+def get_last_experience_memory_warning() -> str:
+    return _LAST_WARNING
+
+
 def get_experience_context(user_query: str, task_type: str) -> str:
+    global _LAST_WARNING
+    _LAST_WARNING = ""
     if memory_client is None:
         if _IMPORT_ERROR is not None:
-            print(f"Warning: experience memory client unavailable: {_IMPORT_ERROR}")
+            _LAST_WARNING = f"experience memory client unavailable: {_IMPORT_ERROR}"
+            print(f"Warning: {_LAST_WARNING}")
         return ""
 
     search_query = f"任务类型：{task_type}\n用户问题：{user_query}"
     try:
         memories = memory_client.search(search_query, top_k=3, min_score=0.25)
-        return memory_client.build_prompt_context(memories)
+        context = memory_client.build_prompt_context(memories)
+        if not context:
+            _LAST_WARNING = "experience memory search returned no memories"
+        return context
     except Exception as exc:
-        print(f"Warning: experience memory search failed: {exc}")
+        _LAST_WARNING = f"experience memory search failed: {exc}"
+        print(f"Warning: {_LAST_WARNING}")
         return ""
 
 

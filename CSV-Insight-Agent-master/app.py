@@ -72,7 +72,11 @@ if st.button("开始分析", type="primary"):
         st.info(result["experience_context"])
     elif mode == "agent_loop":
         st.markdown("### 本次检索到的经验记忆")
-        st.caption("未检索到可用经验，或 Agent-Experience-Memory 服务不可用，本次按原流程执行。")
+        warning = result.get("experience_memory_warning")
+        if warning:
+            st.warning(f"未注入经验记忆：{warning}")
+        else:
+            st.caption("未检索到可用经验，本次按原流程执行。")
 
     if result.get("agent_user_input") or result.get("agent_rendered_prompt"):
         st.markdown("### Agent 实际输入 / Prompt")

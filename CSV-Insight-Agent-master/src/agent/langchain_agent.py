@@ -15,7 +15,7 @@ from langchain_core.tools import BaseTool
 
 from src.agent.langchain_tools import AgentRuntimeContext, build_langchain_tools
 from src.agent.prompts import LANGCHAIN_REACT_SYSTEM_PROMPT
-from src.experience_memory_adapter import get_experience_context
+from src.experience_memory_adapter import get_experience_context, get_last_experience_memory_warning
 from src.agent.trace import steps_from_intermediate
 from src.graph.nodes.planner_loop_node import build_default_registry
 from src.llm.client import LLMClient
@@ -180,6 +180,7 @@ Question: {input}
             task_type="csv_analysis",
         )
         state["experience_context"] = experience_context
+        state["experience_memory_warning"] = get_last_experience_memory_warning()
         memory_sections = [f"记忆上下文：{state.get('memory_context', '暂无历史记忆。')}"]
         if experience_context:
             memory_sections.append(f"经验记忆上下文：\n{experience_context}")
