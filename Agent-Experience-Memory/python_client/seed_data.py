@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
+from python_client.db import fetch_all
 from python_client.experience_store import add_experience
 
 EXPERIENCES = [
@@ -96,10 +99,44 @@ EXPERIENCES = [
 ]
 
 
+def find_existing_experience_id(item: dict[str, Any]) -> int | None:
+    rows = fetch_all(
+        """
+        SELECT id
+        FROM experience_memories
+        WHERE title = %s
+          AND task_type = %s
+          AND prompt_hint = %s
+        ORDER BY id ASC
+        LIMIT 1
+        """,
+        (
+            item["title"],
+            item["task_type"],
+            item["prompt_hint"],
+        ),
+    )
+    if not rows:
+        return None
+    return int(rows[0]["id"])
+
+
 def main() -> None:
+    inserted_count = 0
+    skipped_count = 0
+
     for item in EXPERIENCES:
+        existing_id = find_existing_experience_id(item)
+        if existing_id is not None:
+            skipped_count += 1
+            print(f"skipped existing memory_id={existing_id}: {item['title']}")
+            continue
+
         memory_id = add_experience(**item)
+        inserted_count += 1
         print(f"inserted memory_id={memory_id}: {item['title']}")
+
+    print(f"seed complete: inserted={inserted_count}, skipped={skipped_count}")
 
 
 if __name__ == "__main__":
