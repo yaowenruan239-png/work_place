@@ -104,12 +104,14 @@ python main.py examples/sales.csv "自动分析销售数据，选择图表并生
 
 ## Experience Memory Integration
 
-CSV-Insight-Agent 可选接入兄弟目录 `../Agent-Experience-Memory` 作为经验记忆增强服务。当前项目新增的 `src/experience_memory_adapter.py` 会在 Agent 执行前检索历史经验，并把相关经验追加注入 prompt；同时在关键工具抛出异常时尝试记录错误上下文，便于后续沉淀经验。
+CSV-Insight-Agent 可选通过 HTTP 接入 `Agent-Experience-Memory` 的 Python API Service。当前项目的 `src/experience_memory_adapter.py` 会在 Agent 执行前请求 `http://127.0.0.1:8090/memory/search_context` 检索历史经验，并把相关经验追加注入 prompt；同时在关键工具抛出异常时请求 `/memory/record_error` 记录错误上下文，便于后续沉淀经验。
 
 这是可选增强功能：
 
 - 不启动 `Agent-Experience-Memory` 时，CSV-Insight-Agent 仍可按原流程正常运行。
 - 启动后，Agent 执行前会根据用户问题检索历史经验并注入上下文。
+- CSV 项目不 import `Agent-Experience-Memory` 的 Python 内部模块，不生成 embedding，不直接连接 MySQL。
+- CSV 环境不需要安装 `mysql-connector-python`、`sentence-transformers`、`torch` 或 `transformers`。
 - 原有 `MemoryStore` 文件型记忆不变，`memory/task_history.jsonl`、`memory/user_profile.json`、`memory/chart_preference.json` 仍然照常使用。
 - 该集成不复制 `Agent-Experience-Memory` 代码，不引入 Redis，也不改变主流程。
 

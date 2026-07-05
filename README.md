@@ -157,30 +157,32 @@ streamlit run app.py
 
 ## 3. 两个项目如何集成
 
-`CSV-Insight-Agent-master` 中新增了：
+`CSV-Insight-Agent-master` 通过 HTTP 调用 `Agent-Experience-Memory` 的 Python API Service，不再直接 import 兄弟项目的 Python Client。
+
+集成链路：
 
 ```text
-src/experience_memory_adapter.py
+CSV-Insight-Agent-master
+  -> HTTP requests
+  -> Agent-Experience-Memory Python API :8090
+  -> C++ Memory Service :8080
+  -> MySQL
 ```
 
-它会动态引用兄弟目录：
+`CSV-Insight-Agent-master/src/experience_memory_adapter.py` 只请求：
 
 ```text
-../Agent-Experience-Memory
+POST http://127.0.0.1:8090/memory/search_context
+POST http://127.0.0.1:8090/memory/record_error
 ```
-
-并使用其中的：
-
-- `python_client.memory_client.ExperienceMemoryClient`
-- `python_client.error_collector.record_error`
 
 集成效果：
 
 1. Agent 执行前，根据用户 query 和任务类型构造检索 query。
-2. 调用 `Agent-Experience-Memory` 的 C++ 检索服务获取相似经验。
-3. 使用 Python Client SDK 构造中文经验上下文。
-4. 将经验记忆追加注入到 Agent Prompt / 用户输入中。
-5. 工具调用抛异常时，记录工具名、错误信息、字段、参数和上下文到 MySQL。
+2. CSV 项目通过 HTTP 请求 Python API Service 获取相似经验和中文经验上下文。
+3. 将经验记忆追加注入到 Agent Prompt / 用户输入中。
+4. 工具调用抛异常时，CSV 项目通过 HTTP 请求记录工具名、错误信息、字段、参数和上下文。
+5. CSV 项目环境不需要安装 `mysql-connector-python`、`sentence-transformers`、`torch` 或 `transformers`，也不生成 embedding、不直接连接 MySQL。
 
 服务不可用时不会影响 CSV Agent 主流程：
 
@@ -203,11 +205,12 @@ cd Agent-Experience-Memory
 ./start.sh start --install-deps --seed
 ```
 
-### Step 2：验证经验检索
+### Step 2：验证经验检索 API
 
 ```bash
-cd Agent-Experience-Memory
-NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python -m python_client.demo_search
+curl --noproxy "*" -X POST http://127.0.0.1:8090/memory/search_context \
+  -H "Content-Type: application/json" \
+  -d '{"query":"任务类型：csv_analysis\n用户问题：请分析每个月的销售金额趋势，并生成柱状图","top_k":3,"min_score":0.25}'
 ```
 
 ### Step 3：在 CSV Agent 中查看经验注入
@@ -249,7 +252,7 @@ python main.py examples/sales.csv "请分析每个月的销售金额趋势，并
 
 ### Step 5：验证 fallback
 
-停掉 C++ Memory Service 后再运行同样命令，CSV Agent 应该仍能继续执行，只是不会注入经验记忆。
+停掉 Agent-Experience-Memory Python API Service 后再运行同样命令，CSV Agent 应该仍能继续执行，只是不会注入经验记忆。
 
 ## 5. 技术栈
 
