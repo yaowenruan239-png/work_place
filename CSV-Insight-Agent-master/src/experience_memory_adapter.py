@@ -6,6 +6,8 @@ from typing import Any, Callable
 import requests
 
 EXPERIENCE_MEMORY_API_URL = os.getenv("EXPERIENCE_MEMORY_API_URL", "http://127.0.0.1:8090").rstrip("/")
+EXPERIENCE_MEMORY_SEARCH_TIMEOUT = float(os.getenv("EXPERIENCE_MEMORY_SEARCH_TIMEOUT", "15"))
+EXPERIENCE_MEMORY_RECORD_TIMEOUT = float(os.getenv("EXPERIENCE_MEMORY_RECORD_TIMEOUT", "5"))
 
 _LAST_WARNING = ""
 _LAST_MEMORIES: list[dict[str, Any]] = []
@@ -40,7 +42,7 @@ def get_experience_context(user_query: str, task_type: str) -> str:
     }
 
     try:
-        data = _post_json("/memory/search_context", payload)
+        data = _post_json("/memory/search_context", payload, timeout=EXPERIENCE_MEMORY_SEARCH_TIMEOUT)
     except Exception as exc:
         _LAST_WARNING = f"experience memory api unavailable: {exc}"
         print(f"Warning: {_LAST_WARNING}")
@@ -77,7 +79,7 @@ def record_tool_error(
     }
 
     try:
-        data = _post_json("/memory/record_error", payload)
+        data = _post_json("/memory/record_error", payload, timeout=EXPERIENCE_MEMORY_RECORD_TIMEOUT)
         if data.get("ok") is not True:
             warning = str(data.get("warning") or "experience memory api returned ok=false while recording error")
             print(f"Warning: {warning}")

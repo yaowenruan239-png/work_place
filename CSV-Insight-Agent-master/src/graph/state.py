@@ -19,6 +19,9 @@ class GraphState(TypedDict, total=False):
     html_path: str | None
     pdf_path: str | None
     final_answer: str
+    experience_context: str
+    experience_memory_warning: str
+    experience_memories: list[dict[str, Any]]
     planner_steps: list[dict[str, Any]]
     agent_steps: list[dict[str, Any]]
     errors: list[str]
