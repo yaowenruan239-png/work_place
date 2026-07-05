@@ -38,11 +38,11 @@ work_place/
 
 ```text
 Agent-Experience-Memory/
-├── python_client/                # Python Client SDK
+├── python_client/                # Python Client SDK 和 Python API Service
 ├── cpp_memory_service/           # C++ 向量检索服务
 ├── mysql/schema.sql              # MySQL 表结构
 ├── docker-compose.yml            # MySQL 启动配置
-├── start_experience_memory.sh    # 一键启动脚本
+├── start.sh                      # 一键启动和管理脚本
 └── README.md                     # 子项目说明
 ```
 
@@ -52,26 +52,44 @@ Agent-Experience-Memory/
 
 ```bash
 cd Agent-Experience-Memory
-./start_experience_memory.sh --install-deps --seed
+./start.sh start --install-deps --seed
 ```
 
 后续日常启动：
 
 ```bash
 cd Agent-Experience-Memory
-./start_experience_memory.sh
+./start.sh start
 ```
 
-启动成功后检查：
+查看状态：
+
+```bash
+./start.sh status
+```
+
+停止服务：
+
+```bash
+./start.sh stop
+```
+
+重启服务：
+
+```bash
+./start.sh restart
+```
+
+启动成功后检查 C++ Memory Service：
 
 ```bash
 curl --noproxy "*" http://127.0.0.1:8080/health
 ```
 
-预期可以看到类似：
+启动成功后检查 Python API Service：
 
-```json
-{"index_size":10,"status":"ok"}
+```bash
+curl --noproxy "*" http://127.0.0.1:8090/health
 ```
 
 注意：`--seed` 会插入 demo 经验数据，当前种子脚本没有去重逻辑，不建议每次都加。
@@ -182,7 +200,7 @@ CSV-Insight-Agent-master/docs/experience_memory_integration.md
 
 ```bash
 cd Agent-Experience-Memory
-./start_experience_memory.sh --install-deps --seed
+./start.sh start --install-deps --seed
 ```
 
 ### Step 2：验证经验检索

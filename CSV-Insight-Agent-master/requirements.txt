@@ -5,6 +5,7 @@ matplotlib==3.10.9
 seaborn==0.13.2
 pydantic==2.11.10
 python-dotenv==1.1.1
+requests
 Markdown==3.8.2
 pytest
 

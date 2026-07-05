@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import requests
 
 from python_client.embedding import embed_text
 from python_client.experience_store import get_memories_by_ids, increase_hit_count
+
+os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
+os.environ.setdefault("no_proxy", "127.0.0.1,localhost")
+
+
+def request_without_proxy() -> requests.Session:
+    session = requests.Session()
+    session.trust_env = False
+    return session
 
 
 class ExperienceMemoryClient:
@@ -14,7 +24,7 @@ class ExperienceMemoryClient:
 
     def search(self, query: str, top_k: int = 3, min_score: float = 0.25) -> list[dict[str, Any]]:
         query_vector = embed_text(query)
-        response = requests.post(
+        response = request_without_proxy().post(
             f"{self.service_url}/index/search",
             json={"vector": query_vector, "top_k": top_k},
             timeout=10,

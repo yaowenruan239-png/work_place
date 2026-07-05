@@ -4,12 +4,22 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CPP_DIR="$PROJECT_ROOT/cpp_memory_service"
 BUILD_DIR="$CPP_DIR/build"
-SERVICE_BIN="$BUILD_DIR/agent_memory_service"
+CPP_SERVICE_BIN="$BUILD_DIR/agent_memory_service"
 LOG_DIR="$PROJECT_ROOT/logs"
-SERVICE_LOG="$LOG_DIR/agent_memory_service.log"
-PID_FILE="$PROJECT_ROOT/.agent_memory_service.pid"
-SERVICE_URL="http://127.0.0.1:8080"
-SERVICE_PORT="8080"
+
+CPP_SERVICE_LOG="$LOG_DIR/agent_memory_service.log"
+CPP_PID_FILE="$PROJECT_ROOT/.agent_memory_service.pid"
+CPP_SERVICE_URL="http://127.0.0.1:8080"
+CPP_SERVICE_PORT="8080"
+
+API_SERVICE_LOG="$LOG_DIR/agent_memory_api.log"
+API_PID_FILE="$PROJECT_ROOT/.agent_memory_api.pid"
+API_SERVICE_URL="http://127.0.0.1:8090"
+API_SERVICE_PORT="8090"
+API_START_COMMAND="python -m python_client.api_service"
+
+export NO_PROXY="127.0.0.1,localhost"
+export no_proxy="127.0.0.1,localhost"
 
 COMMAND="start"
 INSTALL_DEPS=0
@@ -21,13 +31,13 @@ FORCE_STOP=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./start_experience_memory.sh [command] [options]
+Usage: ./start.sh [command] [options]
 
 Commands:
-  start       Start MySQL if needed, build/start C++ memory service, then load index. Default command.
-  stop        Stop the C++ memory service. MySQL is kept running unless --stop-mysql is provided.
-  status      Show C++ service health, port listener, PID file, and MySQL container status.
-  restart     Stop then start the C++ memory service and reload index.
+  start       Start MySQL if needed, build/start C++ memory service, load index, then start Python API service. Default command.
+  stop        Stop Python API service, then stop C++ memory service. MySQL is kept running unless --stop-mysql is provided.
+  status      Show C++ service, Python API service, and MySQL container status.
+  restart     Stop both services, then start all services and reload index.
 
 Start options:
   --install-deps   Run pip install -r requirements.txt before startup.
@@ -38,19 +48,19 @@ Start options:
 
 Stop options:
   --stop-mysql     Also stop MySQL with docker compose down.
-  --force          Use kill -9 if normal stop does not terminate the C++ service.
+  --force          Use kill -9 if normal stop does not terminate a service.
 
 Common options:
   -h, --help       Show this help message.
 
 Examples:
-  ./start_experience_memory.sh
-  ./start_experience_memory.sh start --install-deps --seed
-  ./start_experience_memory.sh start --rebuild-cpp
-  ./start_experience_memory.sh status
-  ./start_experience_memory.sh stop
-  ./start_experience_memory.sh stop --stop-mysql
-  ./start_experience_memory.sh restart
+  ./start.sh
+  ./start.sh start --install-deps --seed
+  ./start.sh start --rebuild-cpp
+  ./start.sh status
+  ./start.sh stop
+  ./start.sh stop --stop-mysql
+  ./start.sh restart
 USAGE
 }
 
@@ -110,35 +120,43 @@ command_exists() {
 }
 
 health_check() {
+  local url="$1"
+
   if command_exists curl; then
-    curl --noproxy "*" -fsS "$SERVICE_URL/health" >/dev/null 2>&1
+    curl --noproxy "*" -fsS "$url/health" >/dev/null 2>&1
     return $?
   fi
 
-  NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python - <<'PY' >/dev/null 2>&1
+  NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python - "$url" <<'PY' >/dev/null 2>&1
+import sys
 from urllib.request import urlopen
-urlopen("http://127.0.0.1:8080/health", timeout=1).read()
+urlopen(sys.argv[1] + "/health", timeout=1).read()
 PY
 }
 
 print_health() {
+  local url="$1"
+
   if command_exists curl; then
-    curl --noproxy "*" -fsS "$SERVICE_URL/health" 2>/dev/null || true
+    curl --noproxy "*" -fsS "$url/health" 2>/dev/null || true
     printf '\n'
     return
   fi
 
-  NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python - <<'PY' 2>/dev/null || true
+  NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python - "$url" <<'PY' 2>/dev/null || true
+import sys
 from urllib.request import urlopen
-print(urlopen("http://127.0.0.1:8080/health", timeout=1).read().decode())
+print(urlopen(sys.argv[1] + "/health", timeout=1).read().decode())
 PY
 }
 
 wait_for_http_health() {
-  local retries="${1:-30}"
-  local delay="${2:-1}"
+  local url="$1"
+  local retries="${2:-30}"
+  local delay="${3:-1}"
+
   for _ in $(seq 1 "$retries"); do
-    if health_check; then
+    if health_check "$url"; then
       return 0
     fi
     sleep "$delay"
@@ -147,16 +165,20 @@ wait_for_http_health() {
 }
 
 port_pid() {
+  local port="$1"
+
   if command_exists ss; then
-    ss -ltnp 2>/dev/null | grep ":$SERVICE_PORT " | sed -E 's/.*pid=([0-9]+).*/\1/' | head -n 1 || true
+    ss -ltnp 2>/dev/null | grep ":$port " | sed -E 's/.*pid=([0-9]+).*/\1/' | head -n 1 || true
   elif command_exists lsof; then
-    lsof -ti tcp:"$SERVICE_PORT" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
+    lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
   fi
 }
 
 pid_file_pid() {
-  if [[ -f "$PID_FILE" ]]; then
-    cat "$PID_FILE" 2>/dev/null || true
+  local pid_file="$1"
+
+  if [[ -f "$pid_file" ]]; then
+    tr -d '[:space:]' < "$pid_file" 2>/dev/null || true
   fi
 }
 
@@ -234,7 +256,7 @@ build_cpp_service() {
     rm -rf "$BUILD_DIR"
   fi
 
-  if [[ ! -x "$SERVICE_BIN" ]]; then
+  if [[ ! -x "$CPP_SERVICE_BIN" ]]; then
     log "Building C++ memory service..."
     mkdir -p "$BUILD_DIR"
     (cd "$BUILD_DIR" && cmake .. && cmake --build .)
@@ -243,47 +265,75 @@ build_cpp_service() {
   fi
 }
 
-start_cpp_service() {
+start_background_service() {
+  local name="$1"
+  local url="$2"
+  local port="$3"
+  local pid_file="$4"
+  local log_file="$5"
+  shift 5
+  local command_args=("$@")
+
   mkdir -p "$LOG_DIR"
 
-  if health_check; then
-    log "C++ memory service is already running at $SERVICE_URL."
+  if health_check "$url"; then
+    log "$name is already running at $url."
     return
   fi
 
   local old_pid
-  old_pid="$(pid_file_pid)"
+  old_pid="$(pid_file_pid "$pid_file")"
   if is_pid_running "$old_pid"; then
-    log "Found existing process pid=$old_pid, waiting for health check..."
-    if wait_for_http_health 10 1; then
+    log "Found existing $name process pid=$old_pid, waiting for health check..."
+    if wait_for_http_health "$url" 10 1; then
       return
     fi
-    echo "Existing C++ service process is not healthy. Stop it with: ./start_experience_memory.sh stop --force" >&2
+    echo "Existing $name process is not healthy. Stop it with: ./start.sh stop --force" >&2
     exit 1
   fi
-  rm -f "$PID_FILE"
+  rm -f "$pid_file"
 
   local existing_port_pid
-  existing_port_pid="$(port_pid)"
+  existing_port_pid="$(port_pid "$port")"
   if is_pid_running "$existing_port_pid"; then
-    echo "Port $SERVICE_PORT is already occupied by pid=$existing_port_pid, but health check failed." >&2
-    echo "Stop it first with: kill $existing_port_pid" >&2
+    echo "Port $port is already occupied by pid=$existing_port_pid, but $url/health is not healthy." >&2
+    echo "Please kill the occupying process first: kill $existing_port_pid" >&2
     exit 1
   fi
 
-  log "Starting C++ memory service in background..."
-  cd "$BUILD_DIR"
-  nohup "$SERVICE_BIN" > "$SERVICE_LOG" 2>&1 &
-  local service_pid=$!
-  cd "$PROJECT_ROOT"
-  echo "$service_pid" > "$PID_FILE"
+  log "Starting $name in background..."
+  (
+    cd "$PROJECT_ROOT"
+    nohup "${command_args[@]}" > "$log_file" 2>&1 &
+    echo $! > "$pid_file"
+  )
 
-  if ! wait_for_http_health 30 1; then
-    echo "C++ memory service failed to become healthy. See log: $SERVICE_LOG" >&2
+  if ! wait_for_http_health "$url" 30 1; then
+    echo "$name failed to become healthy. See log: $log_file" >&2
     exit 1
   fi
 
-  log "C++ memory service is healthy at $SERVICE_URL."
+  log "$name is healthy at $url."
+}
+
+start_cpp_service() {
+  start_background_service \
+    "C++ Memory Service" \
+    "$CPP_SERVICE_URL" \
+    "$CPP_SERVICE_PORT" \
+    "$CPP_PID_FILE" \
+    "$CPP_SERVICE_LOG" \
+    "$CPP_SERVICE_BIN"
+}
+
+start_api_service() {
+  start_background_service \
+    "Python API Service" \
+    "$API_SERVICE_URL" \
+    "$API_SERVICE_PORT" \
+    "$API_PID_FILE" \
+    "$API_SERVICE_LOG" \
+    python -m python_client.api_service
 }
 
 load_index() {
@@ -291,83 +341,110 @@ load_index() {
   (cd "$PROJECT_ROOT" && NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost" python -m python_client.load_cpp_index)
 }
 
-stop_cpp_service() {
+stop_background_service() {
+  local name="$1"
+  local url="$2"
+  local port="$3"
+  local pid_file="$4"
+
   local pid_from_file
   local pid_from_port
-  pid_from_file="$(pid_file_pid)"
-  pid_from_port="$(port_pid)"
+  pid_from_file="$(pid_file_pid "$pid_file")"
+  pid_from_port="$(port_pid "$port")"
 
   if [[ -z "$pid_from_file" && -z "$pid_from_port" ]]; then
-    log "C++ memory service is not running on port $SERVICE_PORT."
-    rm -f "$PID_FILE"
+    log "$name is not running on port $port."
+    rm -f "$pid_file"
     return
   fi
 
   local target_pid="${pid_from_port:-$pid_from_file}"
   if [[ -n "$pid_from_file" && "$pid_from_file" != "$target_pid" ]]; then
-    log "PID file has pid=$pid_from_file, but port $SERVICE_PORT is owned by pid=$target_pid. Using port owner."
+    log "$name PID file has pid=$pid_from_file, but port $port is owned by pid=$target_pid. Using port owner."
   fi
 
   if is_pid_running "$target_pid"; then
-    log "Stopping C++ memory service pid=$target_pid..."
+    log "Stopping $name pid=$target_pid..."
     kill "$target_pid" >/dev/null 2>&1 || true
     for _ in $(seq 1 10); do
-      if ! is_pid_running "$target_pid" && ! health_check; then
-        rm -f "$PID_FILE"
-        log "C++ memory service stopped."
+      if ! is_pid_running "$target_pid" && ! health_check "$url"; then
+        rm -f "$pid_file"
+        log "$name stopped."
         return
       fi
       sleep 1
     done
 
     if [[ "$FORCE_STOP" -eq 1 ]]; then
-      log "Force stopping C++ memory service pid=$target_pid..."
+      log "Force stopping $name pid=$target_pid..."
       kill -9 "$target_pid" >/dev/null 2>&1 || true
-      rm -f "$PID_FILE"
-      log "C++ memory service force stopped."
+      rm -f "$pid_file"
+      log "$name force stopped."
       return
     fi
 
-    echo "C++ memory service did not stop in time. Retry with: ./start_experience_memory.sh stop --force" >&2
+    echo "$name did not stop in time. Retry with: ./start.sh stop --force" >&2
     exit 1
   fi
 
-  rm -f "$PID_FILE"
-  log "C++ memory service process is not running. Removed stale PID file."
+  rm -f "$pid_file"
+  log "$name process is not running. Removed stale PID file."
 }
 
-show_status() {
-  echo "Project root: $PROJECT_ROOT"
-  echo "Service URL:  $SERVICE_URL"
-  echo "Service log:  $SERVICE_LOG"
-  echo "PID file:     $PID_FILE"
-  echo
+stop_api_service() {
+  stop_background_service "Python API Service" "$API_SERVICE_URL" "$API_SERVICE_PORT" "$API_PID_FILE"
+}
 
-  if health_check; then
-    echo "C++ service:  running"
-    echo -n "Health:       "
-    print_health
+stop_cpp_service() {
+  stop_background_service "C++ Memory Service" "$CPP_SERVICE_URL" "$CPP_SERVICE_PORT" "$CPP_PID_FILE"
+}
+
+print_service_status() {
+  local name="$1"
+  local url="$2"
+  local port="$3"
+  local pid_file="$4"
+  local log_file="$5"
+
+  echo "$name"
+  echo "  URL:          $url"
+  echo "  Log:          $log_file"
+  echo "  PID file:     $pid_file"
+
+  if health_check "$url"; then
+    echo "  Running:      yes"
+    echo -n "  Health:       "
+    print_health "$url" | sed 's/^/                /'
   else
-    echo "C++ service:  stopped or unhealthy"
+    echo "  Running:      no or unhealthy"
+    echo "  Health:       unavailable"
   fi
 
   local file_pid
   local listener_pid
-  file_pid="$(pid_file_pid)"
-  listener_pid="$(port_pid)"
-  echo "PID file PID: ${file_pid:-none}"
-  echo "Port PID:     ${listener_pid:-none}"
+  file_pid="$(pid_file_pid "$pid_file")"
+  listener_pid="$(port_pid "$port")"
+  echo "  PID file PID: ${file_pid:-none}"
+  echo "  Port PID:     ${listener_pid:-none}"
 
   if command_exists ss; then
-    echo
-    echo "Port listener:"
-    ss -ltnp 2>/dev/null | grep ":$SERVICE_PORT " || echo "no listener on port $SERVICE_PORT"
+    echo "  Port listener:"
+    ss -ltnp 2>/dev/null | grep ":$port " | sed 's/^/                /' || echo "                no listener on port $port"
   fi
+  echo
+}
+
+show_status() {
+  echo "Project root: $PROJECT_ROOT"
+  echo
+  print_service_status "C++ Memory Service" "$CPP_SERVICE_URL" "$CPP_SERVICE_PORT" "$CPP_PID_FILE" "$CPP_SERVICE_LOG"
+  print_service_status "Python API Service" "$API_SERVICE_URL" "$API_SERVICE_PORT" "$API_PID_FILE" "$API_SERVICE_LOG"
 
   if command_exists docker; then
-    echo
     echo "MySQL container:"
     (cd "$PROJECT_ROOT" && docker compose ps mysql) || true
+  else
+    echo "MySQL container: docker command not found"
   fi
 }
 
@@ -379,18 +456,24 @@ start_all() {
   build_cpp_service
   start_cpp_service
   load_index
-  log "Startup complete. Health endpoint: $SERVICE_URL/health"
-  log "Service log: $SERVICE_LOG"
-  log "PID file: $PID_FILE"
+  start_api_service
+  log "Startup complete."
+  log "C++ health endpoint: $CPP_SERVICE_URL/health"
+  log "Python API health endpoint: $API_SERVICE_URL/health"
+  log "C++ service log: $CPP_SERVICE_LOG"
+  log "Python API service log: $API_SERVICE_LOG"
+  log "C++ PID file: $CPP_PID_FILE"
+  log "Python API PID file: $API_PID_FILE"
 }
 
 stop_all() {
+  stop_api_service
   stop_cpp_service
   stop_mysql
 }
 
 restart_all() {
-  stop_cpp_service || true
+  stop_all
   start_all
 }
 

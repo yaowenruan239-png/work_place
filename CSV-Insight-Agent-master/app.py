@@ -67,12 +67,33 @@ if st.button("开始分析", type="primary"):
     if result.get("errors"):
         st.warning("; ".join(result["errors"]))
 
+    experience_memories = result.get("experience_memories") or []
     if result.get("experience_context"):
         st.markdown("### 本次检索到的经验记忆")
         st.info(result["experience_context"])
+        if experience_memories:
+            with st.expander("查看命中的经验条目", expanded=False):
+                for index, memory in enumerate(experience_memories, start=1):
+                    title = memory.get("title") or f"经验 {index}"
+                    score = memory.get("score")
+                    prompt_hint = memory.get("prompt_hint") or ""
+                    score_text = f" · score={float(score):.4f}" if isinstance(score, (int, float)) else ""
+                    st.markdown(f"**{index}. {title}{score_text}**")
+                    if prompt_hint:
+                        st.caption(prompt_hint)
     elif mode == "agent_loop":
         st.markdown("### 本次检索到的经验记忆")
         warning = result.get("experience_memory_warning")
+        if experience_memories:
+            with st.expander("查看命中的经验条目", expanded=True):
+                for index, memory in enumerate(experience_memories, start=1):
+                    title = memory.get("title") or f"经验 {index}"
+                    score = memory.get("score")
+                    prompt_hint = memory.get("prompt_hint") or ""
+                    score_text = f" · score={float(score):.4f}" if isinstance(score, (int, float)) else ""
+                    st.markdown(f"**{index}. {title}{score_text}**")
+                    if prompt_hint:
+                        st.caption(prompt_hint)
         if warning:
             st.warning(f"未注入经验记忆：{warning}")
         else:
