@@ -29,6 +29,48 @@ def _post_json(path: str, payload: dict[str, Any], timeout: float = 3.0) -> dict
     return response.json()
 
 
+def _memory_dedupe_key(memory: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(memory.get("task_type") or "").strip(),
+        str(memory.get("title") or "").strip(),
+        str(memory.get("prompt_hint") or "").strip(),
+    )
+
+
+def _dedupe_memories(memories: Any) -> list[dict[str, Any]]:
+    if not isinstance(memories, list):
+        return []
+
+    deduped: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for memory in memories:
+        if not isinstance(memory, dict):
+            continue
+        key = _memory_dedupe_key(memory)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(memory)
+    return deduped
+
+
+def _build_context_from_memories(memories: list[dict[str, Any]]) -> str:
+    if not memories:
+        return ""
+
+    lines = ["以下是系统过去执行类似任务时总结出的经验，请优先遵守："]
+    for index, memory in enumerate(memories, start=1):
+        prompt_hint = str(memory.get("prompt_hint") or "").strip()
+        if not prompt_hint:
+            continue
+        score = memory.get("score")
+        if isinstance(score, (int, float)):
+            lines.append(f"{index}. {prompt_hint}（相关度：{float(score):.4f}）")
+        else:
+            lines.append(f"{index}. {prompt_hint}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def get_experience_context(user_query: str, task_type: str) -> str:
     global _LAST_WARNING, _LAST_MEMORIES
     _LAST_WARNING = ""
@@ -49,9 +91,8 @@ def get_experience_context(user_query: str, task_type: str) -> str:
         return ""
 
     if data.get("ok") is True:
-        memories = data.get("memories") or []
-        _LAST_MEMORIES = memories if isinstance(memories, list) else []
-        context = str(data.get("context") or "")
+        _LAST_MEMORIES = _dedupe_memories(data.get("memories"))
+        context = _build_context_from_memories(_LAST_MEMORIES)
         if context:
             return context
         _LAST_WARNING = str(data.get("warning") or "experience memory search returned no memories")
